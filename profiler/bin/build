@@ -1,0 +1,96 @@
+#!/bin/bash
+
+DEBUG=0
+
+# Parse command-line arguments
+for arg in "$@"; do
+    case $arg in
+        DEBUG=*)
+            DEBUG="${arg#*=}" # Extract the value after DEBUG=
+            shift # Remove argument from the list
+            ;;
+    esac
+done
+echo "DEBUG is set to ${DEBUG}"
+
+ACCEL_PROF_DIR=$(pwd)
+if [ ! -f "${ACCEL_PROF_DIR}/bin/build" ]; then
+    echo "Please run this script in the root directory of AccelProf"
+    exit 1
+fi
+
+# create directory
+mkdir -p $ACCEL_PROF_DIR/lib
+mkdir -p $ACCEL_PROF_DIR/build
+
+# define build knobs
+: "${ENABLE_COMPUTE_SANALYZER_BACKEND:=0}"
+: "${ENABLE_NVBIT_BACKEND:=0}"
+: "${ENABLE_AMD_ROCM_BACKEND:=0}"
+: "${ENABLE_TORCH_MONITOR_BACKEND:=0}"
+
+
+# check build env
+if [ $ENABLE_TORCH_MONITOR_BACKEND -eq 1 ]; then
+    source ${ACCEL_PROF_DIR}/bin/utils/check_build_env.sh
+fi
+
+# build libbacktrace
+cd $ACCEL_PROF_DIR/sanalyzer/cpp_trace
+if [ ! -d "$ACCEL_PROF_DIR/build/backtrace" ]; then
+    source ${ACCEL_PROF_DIR}/bin/utils/build_libbacktrace
+fi
+
+# build cpp_trace
+cd $ACCEL_PROF_DIR/sanalyzer/cpp_trace
+make -j install DEBUG=$DEBUG BACKTRACE_DIR=$ACCEL_PROF_DIR/build/backtrace \
+                             INSTALL_DIR=$ACCEL_PROF_DIR/build/sanalyzer/cpp_trace
+
+# build py_frame
+cd $ACCEL_PROF_DIR/sanalyzer/py_frame
+make -j install DEBUG=$DEBUG PYBIND11_DIR=$ACCEL_PROF_DIR/third_party/pybind11 \
+                             INSTALL_DIR=$ACCEL_PROF_DIR/build/sanalyzer/py_frame
+
+# build sanalyzer
+cd $ACCEL_PROF_DIR/sanalyzer
+make -j install DEBUG=$DEBUG SANITIZER_TOOL_DIR=$ACCEL_PROF_DIR/nv-compute \
+                             NV_NVBIT_DIR=$ACCEL_PROF_DIR/nv-nvbit \
+                             CPP_TRACE_DIR=$ACCEL_PROF_DIR/build/sanalyzer/cpp_trace \
+                             PY_FRAME_DIR=$ACCEL_PROF_DIR/build/sanalyzer/py_frame \
+                             INSTALL_DIR=$ACCEL_PROF_DIR/build/sanalyzer
+
+# build tensor_scope
+if [ $ENABLE_TORCH_MONITOR_BACKEND -eq 1 ]; then
+    cd $ACCEL_PROF_DIR/tensor_scope
+    make -j install DEBUG=$DEBUG INSTALL_DIR=$ACCEL_PROF_DIR/build/tensor_scope
+fi
+
+
+# build nv-compute
+if [ $ENABLE_COMPUTE_SANALYZER_BACKEND -eq 1 ]; then
+    cd $ACCEL_PROF_DIR/nv-compute
+    make -j DEBUG=$DEBUG SANALYZER_DIR=$ACCEL_PROF_DIR/build/sanalyzer \
+                         TORCH_SCOPE_DIR=$ACCEL_PROF_DIR/build/tensor_scope \
+                         PATCH_SRC_DIR=$ACCEL_PROF_DIR/nv-compute/gpu_src
+
+    cp $ACCEL_PROF_DIR/nv-compute/lib/*.so $ACCEL_PROF_DIR/lib/
+fi
+
+
+# build nv-nvbit
+if [ $ENABLE_NVBIT_BACKEND -eq 1 ]; then
+    cd $ACCEL_PROF_DIR/nv-nvbit
+    make -j DEBUG=$DEBUG SANALYZER_DIR=$ACCEL_PROF_DIR/build/sanalyzer \
+                         TORCH_SCOPE_DIR=$ACCEL_PROF_DIR/build/tensor_scope
+
+    cp $ACCEL_PROF_DIR/nv-nvbit/lib/*.so $ACCEL_PROF_DIR/lib/
+fi
+
+
+# build amd-rocm (Requires AMD ROCm development environment)
+if [ $ENABLE_AMD_ROCM_BACKEND -eq 1 ]; then
+    cd $ACCEL_PROF_DIR/amd-rocm
+    make -j DEBUG=$DEBUG SANALYZER_DIR=$ACCEL_PROF_DIR/build/sanalyzer
+
+    cp $ACCEL_PROF_DIR/amd-rocm/build/lib/*.so $ACCEL_PROF_DIR/lib/
+fi

@@ -1,0 +1,29 @@
+#!/bin/bash
+
+ACCEL_PROF_DIR=$(pwd)
+if [ ! -f "${ACCEL_PROF_DIR}/bin/clean" ]; then
+    echo "Please run this script in the root directory of AccelProf"
+    exit 1
+fi
+
+cd $ACCEL_PROF_DIR
+rm -rf lib
+rm -rf build
+
+cd $ACCEL_PROF_DIR/nv-compute
+make clean
+
+cd $ACCEL_PROF_DIR/nv-nvbit
+make clean
+
+cd $ACCEL_PROF_DIR/tensor_scope
+make clean
+
+cd $ACCEL_PROF_DIR/sanalyzer
+make clean
+
+cd $ACCEL_PROF_DIR/sanalyzer/cpp_trace
+make clean
+
+cd $ACCEL_PROF_DIR/sanalyzer/py_frame
+make clean
